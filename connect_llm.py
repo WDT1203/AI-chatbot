@@ -24,15 +24,21 @@ def load_llm(huggingface_repo_id):
 # connect llm with FAISS and create chain
 
 DB_FAISS_PATH = "vectorstore/db_faiss"
+# Modify your CUSTOM_PROMPT_TEMPLATE to allow for conversational responses
 CUSTOM_PROMPT_TEMPLATE = """
-Use the pieces of information provided in the context to answer user's question.
-If you don't know the answer, just say that you dont know, dont try to make up an answer.
-Dont provide out of given context
+You are a helpful assistant specializing in drug addiction information.
+
+For any questions about drug addiction, substance abuse treatment, or recovery:
+1. ONLY use the factual information provided in the context below
+2. Do NOT make up information or provide hotline numbers not mentioned in the context
+3. If the context doesn't contain relevant information, say "I don't have specific information about that in my database"
+
+For greetings or casual conversation, respond in a friendly way, but keep responses brief.
 
 Context: {context}
 Question: {question}
 
-Start the answer directly. No small talk please.
+Answer the question based ONLY on the context provided. Don't invent facts.
 """
 
 def set_custom_prompt(custom_prompt_template):
@@ -48,7 +54,7 @@ db = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserializ
 qa_chain = RetrievalQA.from_chain_type(
     llm = load_llm(HUGGINGFACE_REPO_ID),
     chain_type = "stuff",
-    retriever = db.as_retriever(search_kwargs = {'k':3}),
+    retriever = db.as_retriever(search_kwargs = {'k':3, 'score_threshold': 0.3}),
     return_source_documents = True,
     chain_type_kwargs = {'prompt':set_custom_prompt(CUSTOM_PROMPT_TEMPLATE)}
 )
@@ -58,3 +64,4 @@ user_query = input("Write query here: ")
 response = qa_chain.invoke({'query': user_query})
 print("RESULT: ", response["result"])
 print("SOURCE DOCUMENTS: ", response["source_documents"])
+print("Number of documents in FAISS:", db.index.ntotal)
