@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Firebase Auth Chatbot Demo</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #17181D;
+      color: white;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #auth-container {
+      padding: 20px;
+      background-color: #33363F;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #chat-container {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+      border-bottom: 1px solid #33363F;
+    }
+    #input-container {
+      display: flex;
+      padding: 10px;
+      background-color: #33363F;
+    }
+    #input-container input {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      border-radius: 5px;
+      margin-right: 10px;
+      background-color: #17181D;
+      color: white;
+    }
+    #input-container button {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 5px;
+      background-color: #6469AB;
+      color: white;
+      cursor: pointer;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      max-width: 80%;
+    }
+    .user-message {
+      text-align: right;
+      background-color: #6469AB;
+      color: white;
+      margin-left: auto;
+    }
+    .bot-message {
+      text-align: left;
+      background-color: #33363F;
+      color: white;
+      margin-right: auto;
+    }
+    .auth-btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      background-color: #6469AB;
+      color: white;
+      cursor: pointer;
+      margin-left: 10px;
+    }
+    .auth-form {
+      display: flex;
+      align-items: center;
+    }
+    .auth-form input {
+      padding: 8px;
+      border: none;
+      border-radius: 4px;
+      margin-right: 10px;
+      background-color: #17181D;
+      color: white;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
+    }
+    .user-email {
+      margin-right: 10px;
+    }
+    .hidden {
+      display: none;
+    }
+    .loading {
+      margin-left: auto;
+      margin-right: auto;
+      text-align: center;
+      padding: 10px;
+      color: #6469AB;
+    }
+    .typing-indicator {
+      display: inline-block;
+      margin-left: 5px;
+    }
+    .typing-indicator span {
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #6469AB;
+      margin: 0 1px;
+      animation: typing 1.4s infinite both;
+    }
+    .typing-indicator span:nth-child(2) {
+      animation-delay: 0.2s;
+    }
+    .typing-indicator span:nth-child(3) {
+      animation-delay: 0.4s;
+    }
+    @keyframes typing {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-5px); }
+    }
+  </style>
+</head>
+<body>
+  <div id="app-container">
+    <div id="auth-container">
+      <!-- Login Form (shown when logged out) -->
+      <div id="login-form" class="auth-form">
+        <input type="email" id="email" placeholder="Email">
+        <input type="password" id="password" placeholder="Password">
+        <button class="auth-btn" onclick="login()">Login</button>
+        <button class="auth-btn" onclick="register()">Register</button>
+      </div>
+      
+      <!-- User Info (shown when logged in) -->
+      <div id="user-info" class="user-info hidden">
+        <span id="user-email" class="user-email"></span>
+        <button class="auth-btn" onclick="logout()">Logout</button>
+        <button class="auth-btn" onclick="clearHistory()">Clear History</button>
+      </div>
+    </div>
+    
+    <div id="chat-container">
+      <div class="message bot-message">Hello, 👋 I'm your personal assistant. Please log in to start a conversation.</div>
+    </div>
+    
+    <div id="input-container">
+      <input type="text" id="user-input" placeholder="Type a message..." disabled>
+      <button id="send-btn" type="button" onclick="sendMessage()" disabled>Send</button>
+    </div>
+  </div>
+
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+
+  <script>
+    // Firebase configuration
+    const firebaseConfig = {
+        apiKey: "AIzaSyBLIOVmfsHkBXOKoEcR2mMREBrD8MQiNac",
+        authDomain: "detoxium-81ea2.firebaseapp.com",
+        projectId: "detoxium-81ea2",
+        storageBucket: "detoxium-81ea2.firebasestorage.app",
+        messagingSenderId: "563632670867",
+        appId: "1:563632670867:web:3ae27ea6c95df220702566"
+    };
+    
+    // Initialize Firebase
+    firebase.initializeApp(firebaseConfig);
+    
+    // User-specific state tracking
+    let isInitialLogin = true;
+    let isProcessingAuth = false;
+    
+    // Auth state change listener
+    firebase.auth().onAuthStateChanged(function(user) {
+      const loginForm = document.getElementById('login-form');
+      const userInfo = document.getElementById('user-info');
+      const userEmail = document.getElementById('user-email');
+      const userInput = document.getElementById('user-input');
+      const sendBtn = document.getElementById('send-btn');
+      const chatContainer = document.getElementById('chat-container');
+      
+      if (user) {
+        // User is signed in
+        console.log("User logged in:", user.email);
+        
+        // Update UI for logged in state
+        loginForm.classList.add('hidden');
+        userInfo.classList.remove('hidden');
+        userEmail.textContent = user.email;
+        userInput.disabled = false;
+        sendBtn.disabled = false;
+        
+        // Only add the welcome message on initial login, not after each API call
+        if (isInitialLogin) {
+          // Store that we've welcomed the user
+          isInitialLogin = false;
+          
+          // If the chat only has the default message, add the welcome message
+          if (chatContainer.children.length === 1 && 
+              chatContainer.children[0].textContent.includes("Please log in to start")) {
+            const welcomeMessage = document.createElement('div');
+            welcomeMessage.className = 'message bot-message';
+            welcomeMessage.textContent = `Welcome back, ${user.email}! Your conversation history is automatically loaded.`;
+            chatContainer.appendChild(welcomeMessage);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+          }
+        }
+      } else {
+        // Only process logout if not in the middle of authentication
+        if (!isProcessingAuth) {
+          // User is signed out
+          console.log("User logged out");
+          
+          // Update UI for logged out state
+          loginForm.classList.remove('hidden');
+          userInfo.classList.add('hidden');
+          userInput.disabled = true;
+          sendBtn.disabled = true;
+          
+          // Clear chat except for the first welcome message
+          while (chatContainer.children.length > 1) {
+            chatContainer.removeChild(chatContainer.lastChild);
+          }
+          
+          // Reset initial login flag
+          isInitialLogin = true;
+        }
+      }
+    });
+    
+    // Login function
+    async function login() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      
+      if (!email || !password) {
+        alert("Please enter both email and password");
+        return;
+      }
+      
+      isProcessingAuth = true;
+      try {
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+        await firebase.auth().signInWithEmailAndPassword(email, password);
+        // Success handling in onAuthStateChanged
+      } catch (error) {
+        console.error("Login error:", error);
+        alert(`Login failed: ${error.message}`);
+      } finally {
+        isProcessingAuth = false;
+      }
+    }
+    
+    // Register function
+    async function register() {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      
+      if (!email || !password) {
+        alert("Please enter both email and password");
+        return;
+      }
+      
+      if (password.length < 6) {
+        alert("Password should be at least 6 characters");
+        return;
+      }
+      
+      isProcessingAuth = true;
+      try {
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+        await firebase.auth().createUserWithEmailAndPassword(email, password);
+        // Success handling in onAuthStateChanged
+      } catch (error) {
+        console.error("Registration error:", error);
+        alert(`Registration failed: ${error.message}`);
+      } finally {
+        isProcessingAuth = false;
+      }
+    }
+    
+    // Logout function
+    async function logout() {
+      isProcessingAuth = true;
+      try {
+        await firebase.auth().signOut();
+        // Success handling in onAuthStateChanged
+      } catch (error) {
+        console.error("Logout error:", error);
+        alert(`Logout failed: ${error.message}`);
+      } finally {
+        isProcessingAuth = false;
+      }
+    }
+    
+    // Clear conversation history
+    async function clearHistory() {
+      const user = firebase.auth().currentUser;
+      if (!user) return;
+      
+      try {
+        const idToken = await user.getIdToken(true);
+        const response = await fetch('http://localhost:5000/clear_history', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ idToken }),
+        });
+        
+        if (response.ok) {
+          const chatContainer = document.getElementById('chat-container');
+          // Clear chat except for the first welcome message
+          while (chatContainer.children.length > 1) {
+            chatContainer.removeChild(chatContainer.lastChild);
+          }
+          
+          // Add confirmation message
+          const confirmMessage = document.createElement('div');
+          confirmMessage.className = 'message bot-message';
+          confirmMessage.textContent = "Your conversation history has been cleared.";
+          chatContainer.appendChild(confirmMessage);
+          chatContainer.scrollTop = chatContainer.scrollHeight;
+        } else {
+          alert('Failed to clear history');
+        }
+      } catch (error) {
+        console.error("Clear history error:", error);
+        alert(`Failed to clear history: ${error.message}`);
+      }
+    }
+    
+    // Add loading indicator
+    function showLoadingIndicator() {
+      const chatContainer = document.getElementById('chat-container');
+      const loadingDiv = document.createElement('div');
+      loadingDiv.id = 'loading-indicator';
+      loadingDiv.className = 'loading';
+      loadingDiv.innerHTML = 'Bot is thinking<div class="typing-indicator"><span></span><span></span><span></span></div>';
+      chatContainer.appendChild(loadingDiv);
+      chatContainer.scrollTop = chatContainer.scrollHeight;
+      return loadingDiv;
+    }
+    
+    // Remove loading indicator
+    function removeLoadingIndicator() {
+      const loadingDiv = document.getElementById('loading-indicator');
+      if (loadingDiv) {
+        loadingDiv.remove();
+      }
+    }
+    
+    // Send message function
+    async function sendMessage() {
+        const user = firebase.auth().currentUser;
+        if (!user) return;
+
+        const userInput = document.getElementById('user-input');
+        const messageText = userInput.value.trim();
+        if (!messageText) return;
+
+        const chatContainer = document.getElementById('chat-container');
+        const sendBtn = document.getElementById('send-btn');
+
+        userInput.disabled = true;
+        sendBtn.disabled = true;
+
+        const userMessage = document.createElement('div');
+        userMessage.className = 'message user-message';
+        userMessage.textContent = messageText;
+        chatContainer.appendChild(userMessage);
+
+        userInput.value = '';
+        const loadingIndicator = showLoadingIndicator();
+
+        try {
+            const idToken = await user.getIdToken(true);
+            const response = await fetch('http://localhost:5000/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                query: messageText,
+                idToken: idToken
+            }),
+            });
+
+            removeLoadingIndicator();
+
+            if (response.ok) {
+            const data = await response.json();
+            const botMessage = document.createElement('div');
+            botMessage.className = 'message bot-message';
+            botMessage.textContent = data.response;
+            chatContainer.appendChild(botMessage);
+            } else {
+            const botMessage = document.createElement('div');
+            botMessage.className = 'message bot-message';
+            botMessage.textContent = 'Error: Unable to fetch response.';
+            chatContainer.appendChild(botMessage);
+            }
+        } catch (error) {
+            removeLoadingIndicator();
+            console.error("Chat error:", error);
+            const botMessage = document.createElement('div');
+            botMessage.className = 'message bot-message';
+            botMessage.textContent = `Error: ${error.message}`;
+            chatContainer.appendChild(botMessage);
+        } finally {
+            userInput.disabled = false;
+            sendBtn.disabled = false;
+            userInput.focus();
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+    }
+    
+    // Allow sending messages with Enter key
+    document.getElementById('user-input').addEventListener('keydown', function(event) {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
+    
+    // Set authentication persistence on page load
+    (async function setAuthPersistence() {
+      try {
+        await firebase.auth().setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+      } catch (error) {
+        console.error("Failed to set auth persistence:", error);
+      }
+    })();
+  </script>
+</body>
+</html>
