@@ -1,0 +1,6 @@
+IconButton(
+  icon: Icon(Icons.mic),
+  onPressed: () {
+    // Implement speech-to-text functionality
+  },
+)

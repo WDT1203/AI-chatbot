@@ -1,0 +1,13 @@
+Widget _buildMessageBubble(Message message) {
+  return Align(
+    alignment: message.isUser ? Alignment.centerRight : Alignment.centerLeft,
+    child: Container(
+      padding: EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: message.isUser ? Colors.blue : Colors.grey[300],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(message.text),
+    ),
+  );
+}

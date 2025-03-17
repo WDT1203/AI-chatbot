@@ -1,0 +1,9 @@
+Dismissible(
+  key: Key(message.text),
+  onDismissed: (direction) {
+    setState(() {
+      _messages.remove(message);
+    });
+  },
+  child: _buildMessageBubble(message),
+)

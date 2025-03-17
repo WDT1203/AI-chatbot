@@ -1,0 +1,4 @@
+InkWell(
+  onTap: _sendMessage,
+  child: Icon(Icons.send, color: Colors.blue),
+)

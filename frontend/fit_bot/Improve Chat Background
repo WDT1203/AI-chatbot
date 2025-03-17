@@ -1,0 +1,6 @@
+decoration: BoxDecoration(
+  image: DecorationImage(
+    image: AssetImage('lib/assets/chat_background.jpeg'),
+    fit: BoxFit.cover,
+  ),
+),

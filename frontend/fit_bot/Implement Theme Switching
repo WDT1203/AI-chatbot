@@ -1,0 +1,7 @@
+bool _isDarkMode = false;
+
+void _toggleTheme() {
+  setState(() {
+    _isDarkMode = !_isDarkMode;
+  });
+}

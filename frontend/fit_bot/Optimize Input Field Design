@@ -1,0 +1,6 @@
+InputDecoration(
+  filled: true,
+  fillColor: Colors.white,
+  contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+  border: OutlineInputBorder(borderRadius: BorderRadius.circular(25)),
+)

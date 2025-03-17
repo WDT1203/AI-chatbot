@@ -1,0 +1,65 @@
+ Widget _buildIcon(String iconPath, {Color? color}) {
+    return Container(
+      width: 40,
+      height: 40,
+      padding: const EdgeInsets.all(8),
+      child: Image.asset(
+        iconPath,
+        color: color,
+      ),
+    );
+  }
+
+  Widget _buildSquareIcon(String iconPath) {
+    return Container(
+      width: 40,
+      height: 40,
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF6469AB),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Image.asset(
+        iconPath,
+        color: Colors.white,
+      ),
+    );
+  }
+
+  Widget _buildBotMessage(String message) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: Image.asset(
+              'lib/assets/converted_image-4.png',
+              fit: BoxFit.contain,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              message,
+              style: const TextStyle(color: Colors.black),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -1,0 +1,7 @@
+TextField(
+  controller: _messageController,
+  decoration: InputDecoration(
+    hintText: 'Type a message...',
+    border: InputBorder.none,
+  ),
+)

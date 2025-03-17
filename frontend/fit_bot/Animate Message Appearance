@@ -1,0 +1,4 @@
+FadeTransition(
+  opacity: _fadeController,
+  child: _buildMessageBubble(message),
+)

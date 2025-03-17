@@ -1,0 +1,19 @@
+void main() {
+  runApp(const ChatApp());
+}
+
+class ChatApp extends StatelessWidget {
+  const ChatApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        scaffoldBackgroundColor: const Color(0xFF17181D),
+        fontFamily: 'Inter',
+      ),
+      home: const ChatScreen(),
+    );
+  }
+}

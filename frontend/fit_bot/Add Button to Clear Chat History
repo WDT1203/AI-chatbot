@@ -1,0 +1,8 @@
+TextButton(
+  onPressed: () {
+    setState(() {
+      _messages.clear();
+    });
+  },
+  child: Text("Clear Chat"),
+)

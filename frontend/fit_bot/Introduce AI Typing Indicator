@@ -1,0 +1,2 @@
+if (_isLoading)
+  Text("AI is typing...", style: TextStyle(color: Colors.grey))

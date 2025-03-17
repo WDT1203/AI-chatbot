@@ -1,0 +1,4 @@
+Text(
+  DateFormat('h:mm a').format(message.time),
+  style: TextStyle(fontSize: 12, color: Colors.grey),
+)
