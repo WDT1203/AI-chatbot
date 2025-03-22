@@ -1,3 +1,17 @@
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()  // Ensures Gradle can fetch required dependencies
+    }
+    dependencies {
+        // START: FlutterFire Configuration
+        classpath 'com.google.gms:google-services:4.3.15'
+        // END: FlutterFire Configuration
+        classpath 'com.android.tools.build:gradle:8.2.1'
+    }
+}
+
 allprojects {
     repositories {
         google()

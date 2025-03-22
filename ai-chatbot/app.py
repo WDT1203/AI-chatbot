@@ -1,13 +1,13 @@
 import os
 import re
 import json
-import time
 from datetime import datetime
 from pathlib import Path
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import firebase_admin
-from firebase_admin import credentials, auth
+from firebase_admin import credentials, auth, firestore
+from dotenv import load_dotenv
 from langchain_huggingface import HuggingFaceEndpoint
 from langchain_core.prompts import PromptTemplate
 from langchain_huggingface import HuggingFaceEmbeddings
@@ -19,49 +19,72 @@ from langchain.schema import messages_from_dict, messages_to_dict
 app = Flask(__name__)
 CORS(app)
 
-# Configuration
-HF_TOKEN = os.environ.get("HF_TOKEN")
-HUGGINGFACE_REPO_ID = "mistralai/Mixtral-8x7B-Instruct-v0.1"  # Upgrade to a more capable model
-SESSIONS_DIR = Path("user_sessions")
-SESSION_EXPIRY_DAYS = 90
-FIREBASE_CREDENTIALS_PATH = os.environ.get("FIREBASE_CREDENTIALS_PATH", "firebase-credentials.json")
+# Load environment variables from .env
+load_dotenv()
 
-SESSIONS_DIR.mkdir(exist_ok=True)
-
-# Initialize Firebase Admin SDK
+# Firebase Configuration
+firebase_enabled = False
+db = None  # Firestore client
 try:
-    cred = credentials.Certificate(FIREBASE_CREDENTIALS_PATH)
+    firebase_credentials = {
+        "type": os.getenv("FIREBASE_TYPE"),
+        "project_id": os.getenv("FIREBASE_PROJECT_ID"),
+        "private_key_id": os.getenv("FIREBASE_PRIVATE_KEY_ID"),
+        "private_key": os.getenv("FIREBASE_PRIVATE_KEY"),
+        "client_email": os.getenv("FIREBASE_CLIENT_EMAIL"),
+        "client_id": os.getenv("FIREBASE_CLIENT_ID"),
+        "auth_uri": os.getenv("FIREBASE_AUTH_URI"),
+        "token_uri": os.getenv("FIREBASE_TOKEN_URI"),
+        "auth_provider_x509_cert_url": os.getenv("FIREBASE_AUTH_PROVIDER_X509_CERT_URL"),
+        "client_x509_cert_url": os.getenv("FIREBASE_CLIENT_X509_CERT_URL"),
+        "universe_domain": os.getenv("FIREBASE_UNIVERSE_DOMAIN"),
+    }
+    if None in firebase_credentials.values():
+        raise ValueError("Missing Firebase credential in environment variables")
+    
+    cred = credentials.Certificate(firebase_credentials)
     firebase_admin.initialize_app(cred)
+    db = firestore.client()
     firebase_enabled = True
-    print("Firebase authentication enabled")
+    print("Firebase initialized successfully with Firestore from environment variables")
 except Exception as e:
-    firebase_enabled = False
     print(f"Warning: Firebase initialization failed: {e}")
-    print("Running without Firebase authentication")
+    print("Running without Firebase authentication as fallback")
 
 def verify_firebase_token(id_token):
     if not firebase_enabled:
+        print("Firebase disabled, cannot verify token")
         return None
     try:
         decoded_token = auth.verify_id_token(id_token)
-        return decoded_token['uid']
+        uid = decoded_token['uid']
+        print(f"Token verified, UID: {uid}")
+        return uid
     except Exception as e:
         print(f"Token verification failed: {e}")
         return None
 
+# Configuration
+HF_TOKEN = os.environ.get("HF_TOKEN")
+HUGGINGFACE_REPO_ID = "mistralai/Mixtral-8x7B-Instruct-v0.1"
+SESSIONS_DIR = Path("user_sessions")
+SESSION_EXPIRY_DAYS = 90
+
+SESSIONS_DIR.mkdir(exist_ok=True)
+
 def load_llm(huggingface_repo_id):
     llm = HuggingFaceEndpoint(
         repo_id=huggingface_repo_id,
-        temperature=0.3,  # Lower for more focused responses
+        temperature=0.3,
         huggingfacehub_api_token=HF_TOKEN,
-        max_new_tokens=1000,  # Increase for detailed answers
-        top_k=40,  # Slightly reduce for better relevance
-        top_p=0.95,  # Higher for more coherent sampling
-        repetition_penalty=1.1,  # Prevent repetition
+        max_new_tokens=1000,
+        top_k=40,
+        top_p=0.95,
+        repetition_penalty=1.1,
     )
     return llm
 
-# Enhanced Prompt Templates
+# Prompt Templates
 CUSTOM_PROMPT_TEMPLATE = """
 You are a friendly, knowledgeable assistant specializing in drug addiction prevention for youth. Your goal is to provide clear, concise, and actionable advice tailored to young people.
 
@@ -108,8 +131,8 @@ def set_no_docs_prompt():
 
 # Load database and LLM
 DB_FAISS_PATH = "vectorstore/db_faiss"
-embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L12-v2")  # Upgrade embedding model
-db = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
+embedding_model = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L12-v2")
+db_vector = FAISS.load_local(DB_FAISS_PATH, embedding_model, allow_dangerous_deserialization=True)
 llm = load_llm(HUGGINGFACE_REPO_ID)
 
 qa_prompt = set_custom_prompt()
@@ -124,6 +147,10 @@ def get_session_path(user_id):
 def save_session(user_id, memory):
     chat_history = memory.load_memory_variables({}).get("chat_history", [])
     serialized_messages = messages_to_dict(chat_history)
+    for msg in serialized_messages:
+        if "additional_kwargs" not in msg["data"]:
+            msg["data"]["additional_kwargs"] = {}
+        msg["data"]["additional_kwargs"]["timestamp"] = datetime.now().isoformat()
     session_data = {
         "last_active": datetime.now().isoformat(),
         "messages": serialized_messages
@@ -164,19 +191,12 @@ def get_session_memory(user_id):
     return memory
 
 def clean_llm_response(text):
-    """Clean and format the LLM response."""
-    # Remove unwanted prefixes
     prefixes = [r'^Assistant:', r'^ANSWER:', r'^YOUR ANSWER:']
     for prefix in prefixes:
         text = re.sub(prefix, '', text, flags=re.IGNORECASE).strip()
-    
-    # Replace escaped newlines with actual newlines and clean up
     text = text.replace('\\n', '\n').strip()
-    
-    # Ensure the response ends with a period if it’s a sentence
     if text and not text.endswith(('.', '!', '?')):
         text += '.'
-    
     return text
 
 def cleanup_expired_sessions():
@@ -202,66 +222,29 @@ def chat():
     data = request.json
     user_query = data.get('query')
     id_token = data.get('idToken')
-    session_id = data.get('session_id', 'anonymous')
 
     if not user_query:
         return jsonify({"error": "No query provided"}), 400
+    if not id_token or not firebase_enabled:
+        return jsonify({"error": "Firebase authentication required"}), 401
 
-    # Verify Firebase token
-    user_id = None
-    if id_token and firebase_enabled:
-        user_id = verify_firebase_token(id_token)
-        if not user_id:
-            return jsonify({"error": "Invalid Firebase ID token"}), 401
-        session_id = user_id
-    else:
-        user_id = session_id
+    user_id = verify_firebase_token(id_token)
+    if not user_id:
+        return jsonify({"error": "Invalid Firebase ID token"}), 401
 
-    # Get user memory
     memory = get_session_memory(user_id)
-
-    # Create QA chain
-    qa_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=db.as_retriever(search_kwargs={'k': 5, 'score_threshold': 0.7}),  # Increase k, stricter threshold
-        memory=memory,
-        return_source_documents=True,
-        combine_docs_chain_kwargs={"prompt": qa_prompt},
-        get_chat_history=lambda h: h,
-        verbose=True
-    )
-
-    # Get response
-    try:
-        chain_response = qa_chain.invoke({'question': user_query})
-        source_docs = chain_response.get("source_documents", [])
-        current_answer = chain_response.get("answer", "I’m not sure how to respond to that.")
-        cleaned_answer = clean_llm_response(current_answer)
-
-        # Fallback if no relevant documents
-        if not source_docs or len(cleaned_answer) < 50:  # If answer is too short, assume it’s weak
-            print(f"No/weak documents for user {user_id}, using fallback prompt")
-            chat_history = memory.load_memory_variables({})["chat_history"]
-            general_response = llm.invoke(no_docs_prompt.format(
-                chat_history=chat_history,
-                question=user_query
-            ))
-            cleaned_answer = clean_llm_response(general_response)
-    except Exception as e:
-        print(f"Error in QA chain for user {user_id}: {e}")
-        cleaned_answer = "Sorry, I hit a snag. Try asking again!"
-
-    # Save session
+    chat_history = memory.load_memory_variables({}).get("chat_history", [])
+    prompt = no_docs_prompt.format(chat_history=chat_history, question=user_query)  # Simplified for no-docs case
+    response = llm.invoke(prompt)
+    cleaned_response = clean_llm_response(response)
+    memory.chat_memory.add_user_message(user_query)
+    memory.chat_memory.add_ai_message(cleaned_response)
     save_session(user_id, memory)
 
-    print(f"USER: {user_id}")
-    print("CLEANED RESULT: ", cleaned_answer)
-    print("SOURCE DOCUMENTS COUNT: ", len(source_docs))
-
     return jsonify({
-        "response": cleaned_answer,
-        "has_source_documents": len(source_docs) > 0,
-        "user_id": user_id
+        "response": cleaned_response,
+        "user_id": user_id,
+        "has_source_documents": False
     })
 
 @app.route('/clear_history', methods=['POST'])
@@ -287,6 +270,72 @@ def clear_history():
         return jsonify({"message": f"History for user {user_id} cleared successfully"})
     
     return jsonify({"message": f"No history found for user {user_id}"})
+
+@app.route('/conversation_history', methods=['POST'])
+def get_conversation_history():
+    data = request.json
+    id_token = data.get('idToken')
+    target_uid = data.get('target_uid')
+
+    if not id_token or not firebase_enabled:
+        return jsonify({"error": "Firebase authentication required"}), 401
+
+    user_id = verify_firebase_token(id_token)
+    if not user_id:
+        return jsonify({"error": "Invalid Firebase ID token"}), 401
+
+    fetch_uid = user_id
+    if target_uid and target_uid != user_id:
+        if not is_parent_authorized(user_id, target_uid):
+            return jsonify({"error": "Unauthorized to access this user's history"}), 403
+        fetch_uid = target_uid
+
+    session_path = get_session_path(fetch_uid)
+    if not session_path.exists():
+        return jsonify({
+            "user_id": fetch_uid,
+            "history": [],
+            "message": "No conversation history found"
+        })
+    try:
+        with open(session_path, 'r') as f:
+            session_data = json.load(f)
+        messages = session_data["messages"]
+        history = []
+        for msg in messages:
+            if msg["type"] == "human":
+                history.append({
+                    "prompt": msg["data"]["content"],
+                    "timestamp": msg["data"]["additional_kwargs"].get("timestamp", "N/A")
+                })
+            elif msg["type"] == "ai":
+                if history and "answer" not in history[-1]:
+                    history[-1]["answer"] = msg["data"]["content"]
+        print(f"Returning history for {fetch_uid}: {history}")
+        return jsonify({
+            "user_id": fetch_uid,
+            "history": history,
+            "total_entries": len(history),
+            "last_active": session_data["last_active"]
+        })
+    except Exception as e:
+        print(f"Error loading history for user {fetch_uid}: {e}")
+        return jsonify({"error": "Failed to load conversation history"}), 500
+
+def is_parent_authorized(parent_uid, child_uid):
+    if not db:
+        print("Firestore not initialized")
+        return False
+    try:
+        doc_ref = db.collection('parent_child_links').document(parent_uid)
+        doc = doc_ref.get()
+        if doc.exists:
+            child_uids = doc.to_dict().get('child_uids', [])
+            return child_uid in child_uids
+        return False
+    except Exception as e:
+        print(f"Error checking authorization: {e}")
+        return False
 
 @app.route('/admin/active_users', methods=['GET'])
 def list_active_users():

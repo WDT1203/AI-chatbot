@@ -17,21 +17,21 @@ class Message {
     required this.text,
     required this.isUser,
     DateTime? time,
-  }) : time = time ?? DateTime.now(),
+  })  : time = time ?? DateTime.now(),
         displayText = isUser ? text : "",
         isComplete = isUser,
         isLoading = !isUser;
 }
 
 class FitbotChat extends StatefulWidget {
-  const FitbotChat({Key? key}) : super(key: key);
+  final String? targetUid; // Optional child UID for parents
+  const FitbotChat({super.key, this.targetUid});
 
   @override
   State<FitbotChat> createState() => _FitbotChatState();
 }
 
-class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
-  final TextEditingController _messageController = TextEditingController();
+class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {  final TextEditingController _messageController = TextEditingController();
   final List<Message> _messages = [];
   bool _isLoading = false;
   Timer? _animationTimer;
@@ -43,6 +43,7 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _initializeFirebaseAuth(); // Add this
     _fadeController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -53,6 +54,19 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
     );
     _messages.add(welcomeMessage);
     _showLoadingDots(welcomeMessage);
+  }
+
+  Future<void> _initializeFirebaseAuth() async {
+    try {
+      if (FirebaseAuth.instance.currentUser == null) {
+        await FirebaseAuth.instance.signInAnonymously();
+        debugPrint("Signed in anonymously: ${FirebaseAuth.instance.currentUser!.uid}");
+      } else {
+        debugPrint("Already signed in: ${FirebaseAuth.instance.currentUser!.uid}");
+      }
+    } catch (e) {
+      debugPrint("Firebase Auth initialization failed: $e");
+    }
   }
 
   @override
@@ -160,54 +174,158 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
   }
 
   Future<String> _fetchBackendResponse(String userMessage) async {
-  try {
-    String? sessionId;
-    String? idToken;
-
-    // Attempt to get Firebase user and token
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        sessionId = user.uid;
-        idToken = await user.getIdToken();
-        debugPrint("Signed-in user: $sessionId");
-      } else {
-        debugPrint("No signed-in user, proceeding anonymously");
-      }
-    } on FirebaseException catch (fe) {
-      debugPrint("Firebase error: ${fe.code} - ${fe.message}");
-      // Continue anonymously if Firebase fails
+        String? idToken;
+        final user = FirebaseAuth.instance.currentUser;
+        if (user != null) {
+            idToken = await user.getIdToken();
+            debugPrint("Sending message with idToken: $idToken");
+        } else {
+            throw Exception("No signed-in user");
+        }
+        const backendUrl = 'http://localhost:5000/chat';
+        final Map<String, dynamic> requestBody = {
+            'query': userMessage,
+            'idToken': idToken,
+        };
+        final response = await http.post(
+            Uri.parse(backendUrl),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(requestBody),
+        );
+        debugPrint("Backend Response Status: ${response.statusCode}");
+        debugPrint("Response body: ${response.body}");
+        if (response.statusCode == 200) {
+            final Map<String, dynamic> responseData = jsonDecode(response.body);
+            return responseData['response'] ?? "No response from server.";
+        } else {
+            return "Server error: ${response.statusCode}";
+        }
+    } catch (e) {
+        debugPrint("Exception in backend call: $e");
+        return "I encountered a technical issue. Please try again later.";
     }
+}
 
-    // Flask request
-    const backendUrl = 'http://localhost:5000/chat';
+  Future<List<Map<String, String>>> _fetchConversationHistory() async {
+  try {
+    String? idToken;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      idToken = await user.getIdToken();
+      debugPrint("Fetching history with idToken: $idToken");
+    } else {
+      debugPrint("No signed-in user for history fetch");
+      throw Exception("No signed-in user");
+    }
+    const backendUrl = 'http://localhost:5000/conversation_history';
     final Map<String, dynamic> requestBody = {
-      'query': userMessage,
-      if (idToken != null) 'idToken': idToken,
-      if (sessionId != null) 'session_id': sessionId,
+      'idToken': idToken,
+      if (widget.targetUid != null) 'target_uid': widget.targetUid,
     };
-
-    debugPrint("Sending request to Flask: $requestBody");
     final response = await http.post(
       Uri.parse(backendUrl),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(requestBody),
     );
-
-    debugPrint("Backend Response Status: ${response.statusCode}");
-    debugPrint("Response body: ${response.body}");
-
+    debugPrint("History fetch status: ${response.statusCode}");
+    debugPrint("History fetch response: ${response.body}");
     if (response.statusCode == 200) {
       final Map<String, dynamic> responseData = jsonDecode(response.body);
-      return responseData['response'] ?? "No response from server.";
+      final List<dynamic> history = responseData['history'] ?? [];
+      debugPrint("History items fetched: ${history.length}");
+      return history
+          .map((item) => {
+                'prompt': item['prompt'] as String,
+                'answer': item['answer'] as String? ?? 'No response',
+                'timestamp': item['timestamp'] as String? ?? 'N/A',
+              })
+          .toList();
     } else {
-      return "Server error: ${response.statusCode}";
+      throw Exception("Server error: ${response.statusCode}");
     }
   } catch (e) {
-    debugPrint("Exception in backend call: $e");
-    return "I encountered a technical issue. Please try again later.";
+    debugPrint("Error fetching history: $e");
+    return []; // Explicitly return an empty list on error
   }
 }
+
+
+  void _showConversationHistory() async {
+    final history = await _fetchConversationHistory();
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          'Conversation History',
+          style: GoogleFonts.ebGaramond(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          height: 400,
+          child: history.isEmpty
+              ? Center(
+                  child: Text(
+                    'No conversation history yet.',
+                    style: GoogleFonts.ebGaramond(fontSize: 16),
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: history.length,
+                  itemBuilder: (context, index) {
+                    final item = history[index];
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'You: ${item['prompt']}',
+                            style: GoogleFonts.ebGaramond(
+                              fontSize: 16,
+                              color: const Color(0xFF8C6E63),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Assistant: ${item['answer']}',
+                            style: GoogleFonts.ebGaramond(
+                              fontSize: 16,
+                              color: const Color(0xFF3E2522),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Time: ${item['timestamp']}',
+                            style: GoogleFonts.ebGaramond(
+                              fontSize: 14,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const Divider(),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Close',
+              style: GoogleFonts.ebGaramond(
+                fontSize: 16,
+                color: const Color(0xFF3E2522),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -276,6 +394,14 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history, color: Color(0xFF8C6E63)),
+            onPressed: _showConversationHistory,
+            tooltip: 'View Conversation History',
+          ),
+          const SizedBox(width: 10),
+        ],
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -364,7 +490,7 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
 
   Widget _buildMessageBubble(Message message) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.symmetric(vertical: 16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisAlignment: message.isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
@@ -438,7 +564,9 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
                                 TextSpan(
                                   text: visibleText,
                                   style: GoogleFonts.ebGaramond(
-                                    color: message.isUser ? const Color(0xFFFFF2DF) : const Color(0xFF3E2522),
+                                    color: message.isUser
+                                        ? const Color(0xFFFFF2DF)
+                                        : const Color(0xFF3E2522),
                                     fontSize: 18,
                                   ),
                                 ),
@@ -447,7 +575,7 @@ class _FitbotChatState extends State<FitbotChat> with TickerProviderStateMixin {
                                   style: GoogleFonts.ebGaramond(
                                     color: message.isUser
                                         ? const Color(0xFFFFF2DF)
-                                        : const Color(0xFF3E2522).withOpacity(_fadeController.value),
+                                        : Color(0xFF3E2522).withValues(alpha: _fadeController.value),
                                     fontSize: 18,
                                   ),
                                 ),
